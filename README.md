@@ -4,7 +4,7 @@
 
 SCINN is a fork of [DeepXDE](https://github.com/lululxvi/deepxde) library, but with many improvements. It avoids some of the unnecessary complexities of the original library while adding new features to better support custom workflows.
 
-> **Note:** SCINN is still under active development and is not yet functional. We are working hard to bring it to full capacity soon.
+> **Note:** SCINN is still under active development and is not yet functional.
 
 ## Key Features
 - Simplified API for faster development.
