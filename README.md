@@ -8,6 +8,6 @@ SCINN is a fork of [DeepXDE](https://github.com/lululxvi/deepxde) library, but w
 
 ## Key Features
 - Simplified API for faster development.
-- Support of more complex geoemtries
+- Support of more complex geomtries
 - Improved stability and performance for physics-informed neural networks (PINNs).
 - New functionalities for handling a wider range of physics-based problems.
