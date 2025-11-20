@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: scinn
+Version: 0.1.0
+Summary: A lightweight Physics-Informed Neural Networks framework in PyTorch
+Author: SCINN Team
+Requires-Python: >=3.8
+Requires-Dist: numpy
+Requires-Dist: torch>=1.9.0
+Requires-Dist: matplotlib
+Requires-Dist: scipy
+Dynamic: author
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
