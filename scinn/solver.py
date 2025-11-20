@@ -13,14 +13,16 @@ class Solver:
     
     Args:
         model: Neural network model
-        data: Data object containing geometry, PDEs, and boundary conditions
+        data: Data object containing geometry, PDEs, boundary conditions, and measurements
         optimizer: PyTorch optimizer (default: Adam)
         lr: Learning rate
-        loss_weights: Dictionary of loss weights {'pde': w1, 'bc': w2, 'ic': w3}
+        loss_weights: Dictionary of loss weights {'pde': w1, 'bc': w2, 'ic': w3, 'data': w4}
+        device: Device to run on ('cpu' or 'cuda')
         
     Example:
         model = FNN([2, 50, 50, 1])
-        solver = Solver(model, data, lr=1e-3)
+        solver = Solver(model, data, lr=1e-3, 
+                       loss_weights={'pde': 1.0, 'bc': 1.0, 'ic': 1.0, 'data': 10.0})
         solver.train(epochs=10000)
     """
     
@@ -44,16 +46,20 @@ class Solver:
         
         # Loss weights
         if loss_weights is None:
-            self.loss_weights = {'pde': 1.0, 'bc': 1.0, 'ic': 1.0}
+            self.loss_weights = {'pde': 1.0, 'bc': 1.0, 'ic': 1.0, 'data': 1.0}
         else:
-            self.loss_weights = loss_weights
+            # Ensure all keys exist with default values
+            default_weights = {'pde': 1.0, 'bc': 1.0, 'ic': 1.0, 'data': 1.0}
+            default_weights.update(loss_weights)
+            self.loss_weights = default_weights
         
         # Training history
         self.history = {
             'loss': [],
             'loss_pde': [],
             'loss_bc': [],
-            'loss_ic': []
+            'loss_ic': [],
+            'loss_data': []
         }
     
     def compute_pde_loss(self, x):
@@ -125,6 +131,33 @@ class Solver:
         
         return total_loss
     
+    def compute_data_loss(self):
+        """Compute data fitting loss from measurement points.
+        
+        Returns:
+            Data loss (scalar tensor)
+        """
+        if not self.data.has_measurements():
+            return torch.tensor(0.0, device=self.device)
+        
+        measurement_data = self.data.get_measurement_data()
+        
+        # Convert measurement data to tensors
+        x_data = self.data.to_tensor(measurement_data['x'], 
+                                     device=self.device, 
+                                     requires_grad=False)
+        u_data = self.data.to_tensor(measurement_data['u'], 
+                                     device=self.device, 
+                                     requires_grad=False)
+        
+        # Predict at measurement locations
+        u_pred = self.model(x_data)
+        
+        # Compute MSE between predictions and measurements
+        loss = torch.mean((u_pred - u_data) ** 2)
+        
+        return loss
+    
     def compute_total_loss(self):
         """Compute total weighted loss.
         
@@ -141,14 +174,18 @@ class Solver:
         # Initial conditions
         loss_ic = self.compute_ic_loss()
         
+        # Measurement data
+        loss_data = self.compute_data_loss()
+        
         # Total weighted loss
         total_loss = (
             self.loss_weights['pde'] * loss_pde +
             self.loss_weights['bc'] * loss_bc +
-            self.loss_weights['ic'] * loss_ic
+            self.loss_weights['ic'] * loss_ic +
+            self.loss_weights['data'] * loss_data
         )
         
-        return total_loss, loss_pde, loss_bc, loss_ic
+        return total_loss, loss_pde, loss_bc, loss_ic, loss_data
     
     def train_step(self):
         """Perform one training step.
@@ -160,7 +197,7 @@ class Solver:
         self.optimizer.zero_grad()
         
         # Compute losses
-        total_loss, loss_pde, loss_bc, loss_ic = self.compute_total_loss()
+        total_loss, loss_pde, loss_bc, loss_ic, loss_data = self.compute_total_loss()
         
         # Backward pass
         total_loss.backward()
@@ -170,7 +207,8 @@ class Solver:
             'loss': total_loss.item(),
             'loss_pde': loss_pde.item(),
             'loss_bc': loss_bc.item(),
-            'loss_ic': loss_ic.item()
+            'loss_ic': loss_ic.item(),
+            'loss_data': loss_data.item()
         }
     
     def train(self, epochs, print_every=100, resample_every=None):
@@ -184,7 +222,10 @@ class Solver:
         print(f"Starting training for {epochs} epochs...")
         print(f"Device: {self.device}")
         print(f"Model parameters: {sum(p.numel() for p in self.model.parameters())}")
-        print("-" * 70)
+        print(f"Loss weights: {self.loss_weights}")
+        if self.data.has_measurements():
+            print(f"Training with {self.data.get_measurement_data()['x'].shape[0]} measurement points")
+        print("-" * 80)
         
         for epoch in range(epochs):
             # Resample points if specified
@@ -204,9 +245,10 @@ class Solver:
                       f"Loss: {losses['loss']:.6e} | "
                       f"PDE: {losses['loss_pde']:.6e} | "
                       f"BC: {losses['loss_bc']:.6e} | "
-                      f"IC: {losses['loss_ic']:.6e}")
+                      f"IC: {losses['loss_ic']:.6e} | "
+                      f"Data: {losses['loss_data']:.6e}")
         
-        print("-" * 70)
+        print("-" * 80)
         print("Training completed!")
     
     def predict(self, x):
@@ -223,6 +265,44 @@ class Solver:
             x_tensor = self.data.to_tensor(x, device=self.device, requires_grad=False)
             u = self.model(x_tensor)
             return u.cpu().numpy()
+    
+    def evaluate_at_measurements(self):
+        """Evaluate model predictions at measurement locations.
+        
+        Returns:
+            Dictionary with 'x', 'u_true', 'u_pred', and 'error' keys
+        """
+        if not self.data.has_measurements():
+            print("No measurement data available")
+            return None
+        
+        measurement_data = self.data.get_measurement_data()
+        x_data = measurement_data['x']
+        u_true = measurement_data['u']
+        
+        # Predict
+        u_pred = self.predict(x_data)
+        
+        # Compute error metrics
+        error = u_pred - u_true
+        mse = np.mean(error ** 2)
+        mae = np.mean(np.abs(error))
+        max_error = np.max(np.abs(error))
+        
+        print(f"\nMeasurement Error Metrics:")
+        print(f"  MSE:       {mse:.6e}")
+        print(f"  MAE:       {mae:.6e}")
+        print(f"  Max Error: {max_error:.6e}")
+        
+        return {
+            'x': x_data,
+            'u_true': u_true,
+            'u_pred': u_pred,
+            'error': error,
+            'mse': mse,
+            'mae': mae,
+            'max_error': max_error
+        }
     
     def save(self, filepath):
         """Save model and optimizer state.
